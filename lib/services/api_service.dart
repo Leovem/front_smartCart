@@ -4,6 +4,9 @@ import 'package:http/http.dart' as http;
 import '../models/user.dart';
 import '../models/products.dart';
 import '../models/cart_item.dart';
+import '../models/purchase_response.dart';
+import '../models/checkout_response.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
   final String baseUrl = 'https://web-production-31b3.up.railway.app';
@@ -139,28 +142,38 @@ class ApiService {
     required int usuarioId,
     required int productoId,
   }) async {
-    final url = Uri.parse('$baseUrl/cart/eliminar-del-carrito/');
-    final response = await http.post(
+    final url = Uri.parse('$baseUrl/api/cart/eliminar-del-carrito/');
+    final response = await http.delete(
       url,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'usuario_id': usuarioId, 'producto_id': productoId}),
     );
 
     if (response.statusCode != 200) {
+      print('Error: ${response.statusCode}');
+      print('Response body: ${response.body}');
       throw Exception('Error al eliminar el producto');
+    } else {
+      print('Producto eliminado correctamente');
     }
   }
 
-  Future<Map<String, dynamic>> checkout({
+  Future<CheckoutResponse> checkout({
     required int usuarioId,
     required int metodoPagoId,
     required String direccionEnvio,
     required String tipoEntrega,
   }) async {
-    final url = Uri.parse('$baseUrl/orders/compra_carrito/');
+    final url = Uri.parse('$baseUrl/api/orders/compra_carrito/');
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+
     final response = await http.post(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      },
       body: jsonEncode({
         'usuario_id': usuarioId,
         'metodo_pago_id': metodoPagoId,
@@ -169,8 +182,11 @@ class ApiService {
       }),
     );
 
+    print('📥 Código de estado (checkout): ${response.statusCode}');
+    print('📥 Respuesta del backend (checkout): ${response.body}');
+
     if (response.statusCode == 201) {
-      return jsonDecode(response.body);
+      return CheckoutResponse.fromJson(jsonDecode(response.body));
     } else if (response.statusCode == 400) {
       throw Exception(jsonDecode(response.body)['detail'] ?? 'Faltan datos');
     } else if (response.statusCode == 404) {
@@ -178,12 +194,14 @@ class ApiService {
         jsonDecode(response.body)['detail'] ?? 'Recurso no encontrado',
       );
     } else {
-      throw Exception('Error al procesar la compra');
+      throw Exception(
+        'Error al procesar la compra: ${response.statusCode} - ${response.body}',
+      );
     }
   }
 
   Future<String> initiatePaypalPayment(int pagoId) async {
-    final url = Uri.parse('$baseUrl/generar_pago_paypal/');
+    final url = Uri.parse('$baseUrl/api/payment/generar_pago_paypal/');
     final response = await http.post(
       url,
       headers: {'Content-Type': 'application/json'},
@@ -206,7 +224,7 @@ class ApiService {
     required int productoId,
     required int cantidad,
   }) async {
-    final url = Uri.parse('$baseUrl/cart/actualizar-cantidad/');
+    final url = Uri.parse('$baseUrl/api/cart/actualizar-cantidad/');
     final response = await http.post(
       url,
       headers: {'Content-Type': 'application/json'},
@@ -219,6 +237,52 @@ class ApiService {
 
     if (response.statusCode != 200) {
       throw Exception('Error al actualizar la cantidad');
+    }
+  }
+
+  Future<CompraDirectaResponse> compraDirecta({
+    required int usuarioId,
+    required int productoId,
+    required int cantidad,
+    required int metodoPagoId,
+    required String direccionEnvio,
+    String tipoEntrega = 'estándar',
+  }) async {
+    final url = Uri.parse('$baseUrl/api/orders/compra-directa/');
+
+    final Map<String, dynamic> requestBody = {
+      'usuario_id': usuarioId,
+      'producto_id': productoId,
+      'cantidad': cantidad,
+      'metodo_pago_id': metodoPagoId,
+      'direccion_envio': direccionEnvio,
+      'tipo_entrega': tipoEntrega,
+    };
+
+    print(
+      '🛒 Datos enviados al backend: ${const JsonEncoder.withIndent('  ').convert(requestBody)}',
+    );
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        // 'Authorization': 'Bearer <token>', // Descomenta si usas autenticación
+      },
+      body: jsonEncode(requestBody),
+    );
+
+    print('📥 Código de estado: ${response.statusCode}');
+    print('📥 Respuesta del backend: ${response.body}');
+
+    if (response.statusCode == 201) {
+      return CompraDirectaResponse.fromJson(jsonDecode(response.body));
+    } else if (response.statusCode == 400) {
+      throw Exception('⚠️ Faltan datos necesarios');
+    } else if (response.statusCode == 404) {
+      throw Exception('❌ Producto, usuario o método de pago no encontrado');
+    } else {
+      throw Exception('🚫 Error al realizar la compra');
     }
   }
 }

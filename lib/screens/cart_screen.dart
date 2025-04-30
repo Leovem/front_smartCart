@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/cart_item.dart';
+//import '../models/checkout_response.dart';
 import '../services/api_service.dart';
+import './pay_screen_cart.dart'; // Cambiado de pay_screen a pay_screen_cart
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -16,8 +18,15 @@ class _CartScreenState extends State<CartScreen> {
   int? _usuarioId;
   final _direccionController = TextEditingController();
   String _selectedDeliveryType = 'estándar';
+  int? _selectedMetodoPagoId;
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
+
+  // Lista estática de métodos de pago
+  final List<Map<String, dynamic>> _metodosPago = [
+    {'id': 1, 'tipo': 'Tarjeta de Débito'},
+    {'id': 2, 'tipo': 'PayPal'},
+  ];
 
   @override
   void initState() {
@@ -115,23 +124,42 @@ class _CartScreenState extends State<CartScreen> {
 
   Future<void> _checkout() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_selectedMetodoPagoId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Por favor selecciona un método de pago'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
     try {
-      // Step 1: Create order via compra_carrito
+      // Crear el pedido
       final checkoutResponse = await ApiService().checkout(
         usuarioId: _usuarioId!,
-        metodoPagoId: 1, // Hardcoded PayPal metodo_pago_id
+        metodoPagoId: _selectedMetodoPagoId!,
         direccionEnvio: _direccionController.text,
         tipoEntrega: _selectedDeliveryType,
       );
 
       if (!mounted) return;
 
-      // Step 2: Initiate PayPal payment
+      // Navegar a PayScreenCart
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PayScreenCart(compra: checkoutResponse),
+        ),
+      );
+
+      // Iniciar pago con PayPal
       final approvalUrl = await ApiService().initiatePaypalPayment(
-        checkoutResponse['pago_id'],
+        checkoutResponse.pagoId,
       );
       if (!mounted) return;
       if (await canLaunch(approvalUrl)) {
@@ -147,7 +175,7 @@ class _CartScreenState extends State<CartScreen> {
         throw 'No se pudo lanzar la URL de PayPal';
       }
 
-      // Refresh cart after redirect (cart should be cleared by compra_carrito)
+      // Refrescar el carrito
       setState(() {
         _futureCartItems = ApiService().fetchCart(_usuarioId!);
       });
@@ -315,6 +343,31 @@ class _CartScreenState extends State<CartScreen> {
                                     validator: (value) {
                                       if (value == null || value.isEmpty) {
                                         return 'Por favor ingresa una dirección';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  DropdownButtonFormField<int>(
+                                    decoration: const InputDecoration(
+                                      labelText: 'Método de Pago',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    items:
+                                        _metodosPago.map((metodo) {
+                                          return DropdownMenuItem<int>(
+                                            value: metodo['id'],
+                                            child: Text(metodo['tipo']),
+                                          );
+                                        }).toList(),
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedMetodoPagoId = value;
+                                      });
+                                    },
+                                    validator: (value) {
+                                      if (value == null) {
+                                        return 'Por favor selecciona un método de pago';
                                       }
                                       return null;
                                     },
